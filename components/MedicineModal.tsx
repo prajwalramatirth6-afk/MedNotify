@@ -3,14 +3,14 @@ import React, { useState, useEffect } from 'react';
 import { Medication, Frequency } from '../types';
 import { getMedicationInsight } from '../services/geminiService';
 
-interface MedicineFormProps {
+interface MedicineModalProps {
   onAdd?: (med: Medication) => void;
   onUpdate?: (med: Medication) => void;
   onClose: () => void;
   initialData?: Medication | null;
 }
 
-const MedicineForm: React.FC<MedicineFormProps> = ({ onAdd, onUpdate, onClose, initialData }) => {
+const MedicineModal: React.FC<MedicineModalProps> = ({ onAdd, onUpdate, onClose, initialData }) => {
   const [formData, setFormData] = useState({
     name: '',
     dose: '',
@@ -193,4 +193,4 @@ const MedicineForm: React.FC<MedicineFormProps> = ({ onAdd, onUpdate, onClose, i
   );
 };
 
-export default MedicineForm;
+export default MedicineModal;

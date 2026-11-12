@@ -2,13 +2,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile, Medication, ChatMessage } from '../types';
 import { chatWithAIDoctor } from '../services/geminiService';
+import { queryN8nHealthAssistant } from '../services/n8nService';
 
-interface AIDoctorProps {
+interface HealthAssistantProps {
   profile: UserProfile;
   meds: Medication[];
 }
 
-const AIDoctor: React.FC<AIDoctorProps> = ({ profile, meds }) => {
+const HealthAssistant: React.FC<HealthAssistantProps> = ({ profile, meds }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'model', text: 'Hello! I am your AI Health Assistant. I am monitoring your profile for potential drug-drug interactions and allergy risks. How can I assist you today?' }
   ]);
@@ -34,7 +35,15 @@ const AIDoctor: React.FC<AIDoctorProps> = ({ profile, meds }) => {
     setIsTyping(true);
 
     try {
-      const response = await chatWithAIDoctor(trimmedInput, historyForAPI, profile, meds);
+      // First attempt request through n8n automation pipeline
+      let response: string | null | undefined = await queryN8nHealthAssistant(trimmedInput, historyForAPI, profile, meds);
+
+      // If n8n returns no content (e.g. test webhook waiting or respond immediately without body),
+      // seamlessly fallback to direct Gemini model inference
+      if (!response) {
+        response = await chatWithAIDoctor(trimmedInput, historyForAPI, profile, meds);
+      }
+
       const modelMsg: ChatMessage = { role: 'model', text: response || 'I am sorry, I could not process that.' };
       setMessages(prev => [...prev, modelMsg]);
     } catch (error) {
@@ -59,9 +68,15 @@ const AIDoctor: React.FC<AIDoctorProps> = ({ profile, meds }) => {
             <h2 className="text-2xl font-black text-slate-800 tracking-tight">AI Doctor 🩺</h2>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Interaction & Allergy Guard</p>
           </div>
-          <div className="bg-green-50 px-3 py-1.5 rounded-full border border-green-100 flex items-center space-x-1.5">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-[8px] font-black text-green-700 uppercase">Profile Sync Active</span>
+          <div className="flex items-center space-x-2">
+            <div className="bg-purple-50 px-2.5 py-1.5 rounded-full border border-purple-100 flex items-center space-x-1" title="Connected to n8n automation workflow">
+              <span className="text-[10px]">⚡</span>
+              <span className="text-[8px] font-black text-purple-700 uppercase">n8n Connected</span>
+            </div>
+            <div className="bg-green-50 px-3 py-1.5 rounded-full border border-green-100 flex items-center space-x-1.5">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              <span className="text-[8px] font-black text-green-700 uppercase">Profile Sync Active</span>
+            </div>
           </div>
         </div>
       </div>
@@ -158,4 +173,4 @@ const AIDoctor: React.FC<AIDoctorProps> = ({ profile, meds }) => {
   );
 };
 
-export default AIDoctor;
+export default HealthAssistant;

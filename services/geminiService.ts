@@ -1,47 +1,98 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { UserProfile, Medication, ChatMessage } from "../types";
 
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+const BACKEND_URL = (import.meta as any)?.env?.VITE_BACKEND_URL || 'http://localhost:8000';
 
-export const getMedicationInsight = async (name: string, dose: string) => {
-  const ai = getAI();
+export const getGeminiApiKey = (): string => {
+  if (typeof process !== 'undefined' && process.env?.API_KEY) {
+    return process.env.API_KEY;
+  }
+  const metaEnv = (import.meta as any)?.env;
+  if (metaEnv?.VITE_API_KEY) return metaEnv.VITE_API_KEY;
+  if (metaEnv?.GEMINI_API_KEY) return metaEnv.GEMINI_API_KEY;
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const local = localStorage.getItem('mednotify_gemini_api_key');
+    if (local) return local.trim();
+  }
+  return '';
+};
+
+const getAI = () => {
+  const key = getGeminiApiKey();
+  if (!key) {
+    throw new Error("API key is not configured.");
+  }
+  return new GoogleGenAI({ apiKey: key });
+};
+
+/**
+ * Fetch medication tip from Python FastAPI backend with client fallback.
+ */
+export const getMedicationInsight = async (name: string, dose: string): Promise<string> => {
   try {
+    const res = await fetch(`${BACKEND_URL}/api/medications/insight`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, dose })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.insight) return data.insight;
+    }
+  } catch {
+    // Backend offline, fallback to client-side
+  }
+
+  if (!getGeminiApiKey()) {
+    return "Remember to take as prescribed by your doctor.";
+  }
+
+  try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.5-flash',
       contents: `Provide a very brief (max 2 sentences) tip for taking ${name} (${dose}). Focus on common advice like "take with food" or "avoid alcohol". Keep it professional and helpful.`,
     });
-    return response.text;
-  } catch (error) {
-    console.error("AI Insight Error:", error);
+    return response.text || "Remember to take as prescribed by your doctor.";
+  } catch {
     return "Remember to take as prescribed by your doctor.";
   }
 };
 
-export const getDailyHealthTip = async () => {
-  const ai = getAI();
+/**
+ * Fetch daily health tip from Python FastAPI backend with client fallback.
+ */
+export const getDailyHealthTip = async (): Promise<string> => {
+  const fallbacks = [
+    "Drink a full glass of water with your medication for better absorption.",
+    "Try to take your medicine at the same time every day to build a habit.",
+    "Keep a list of all your medications in your wallet for emergencies.",
+    "Store your medications in a cool, dry place away from direct sunlight.",
+    "Don't hesitate to ask your pharmacist if you have questions about side effects."
+  ];
+
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: "Provide a unique, one-sentence health tip for someone taking daily medications. Focus on hydration, consistency, safety, or general wellness. Make it encouraging and short.",
-    });
-    return response.text || "Consistency is the key to effective treatment. Stay on track!";
-  } catch (error) {
-    console.error("Daily Tip Error:", error);
-    const fallbacks = [
-      "Drink a full glass of water with your medication for better absorption.",
-      "Try to take your medicine at the same time every day to build a habit.",
-      "Keep a list of all your medications in your wallet for emergencies.",
-      "Store your medications in a cool, dry place away from direct sunlight.",
-      "Don't hesitate to ask your pharmacist if you have questions about side effects."
-    ];
-    return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+    const res = await fetch(`${BACKEND_URL}/api/tips/daily`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.tip) return data.tip;
+    }
+  } catch {
+    // Backend offline, continue to fallback
   }
+
+  return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 };
 
+/**
+ * Find nearby pharmacies using Maps grounding tool.
+ */
 export const findNearbyPharmacies = async (lat: number, lng: number) => {
-  const ai = getAI();
+  if (!getGeminiApiKey()) {
+    return null;
+  }
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-09-2025",
       contents: "List the top 5 pharmacies closest to my current location. Provide their names and website or map links if possible.",
@@ -73,63 +124,69 @@ export const findNearbyPharmacies = async (lat: number, lng: number) => {
   }
 };
 
+/**
+ * AI Health Assistant: Queries Python FastAPI backend with client fallback.
+ */
 export const chatWithAIDoctor = async (
   message: string,
   history: ChatMessage[],
   profile: UserProfile,
   meds: Medication[]
-) => {
-  const ai = getAI();
-  const medsSummary = meds.map(m => `${m.name} (${m.dose}, ${m.frequency})`).join(', ');
-  
-  const systemInstruction = `You are "MedNotify AI Doctor", a safety-focused medical assistant. 
-  
-  CORE MISSION: 
-  Prevent adverse drug events. When a user asks about a new medication or a symptom, you MUST cross-reference it with their existing profile.
-  
-  User Profile:
-  - Age/Gender: ${profile.age || 'Unknown'} / ${profile.gender || 'Unknown'}
-  - Vitals: BP ${profile.bloodPressure || 'N/A'}, Sugar ${profile.sugarLevel || 'N/A'}
-  - Allergies: ${profile.allergies || 'NONE LISTED - proceed with caution'}
-  - Medical Notes: ${profile.doctorNotes || 'None'}
-  
-  Current Medication List (The user is ALREADY taking these): 
-  ${medsSummary || 'NONE'}
-  
-  Strict Safety Protocols:
-  1. INTERACTION CHECK: If the user mentions taking a new drug, supplement, or herb, immediately check for severe interactions with their current medications listed above.
-  2. ALLERGY CHECK: Check if the new drug belongs to a class the user is allergic to (e.g., if they are allergic to Penicillin, flag Amoxicillin).
-  3. CONDITION CHECK: Check if the drug is contraindicated for their vitals (e.g., avoiding NSAIDs with high BP).
-  4. RESPONSE STYLE: Use bold warning labels like "⚠️ INTERACTION ALERT" if you find a conflict.
-  
-  Format:
-  - Use clear, bulleted lists.
-  - Be direct and clinical yet empathetic.
-  - ALWAYS conclude with: "⚠️ DISCLAIMER: This is AI-generated analysis. Interactions can be complex. Consult your primary physician immediately before changing your regimen."`;
+): Promise<string> => {
+  // 1. Try Python FastAPI backend first
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        history,
+        profile,
+        medications: meds.map(m => ({
+          name: m.name,
+          dose: m.dose,
+          frequency: m.frequency,
+          expiryDate: m.expiryDate
+        }))
+      })
+    });
 
-  const apiHistory = history.filter((msg, index) => {
-    if (index === 0 && msg.role === 'model') return false;
-    return true;
-  });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.reply) return data.reply;
+    }
+  } catch {
+    // Server offline, proceed to client fallback
+  }
 
-  const contents = [
-    ...apiHistory.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
-    { role: 'user', parts: [{ text: message }] }
-  ];
+  // 2. Client-side fallback if backend is unreachable
+  if (!getGeminiApiKey()) {
+    return "🔑 Google Gemini API Key Required\n\nTo enable AI drug-drug interaction and allergy checks:\n1. Configure GEMINI_API_KEY in backend/.env for the Python server.\n2. Or tap the Settings icon (⚙️) in the top header and enter your key.\n\nGet a free key in seconds at: https://aistudio.google.com/app/apikey";
+  }
 
   try {
+    const ai = getAI();
+    const medsSummary = meds.map(m => `${m.name} (${m.dose}, ${m.frequency})`).join(', ');
+    const systemInstruction = `You are "MedNotify AI Health Assistant", a safety-focused medical advisor.
+Cross-reference user questions against their profile (Age: ${profile.age}, BP: ${profile.bloodPressure}, Allergies: ${profile.allergies}) and current medications (${medsSummary}). Always include a standard medical disclaimer.`;
+
+    const apiHistory = history.filter((msg, index) => index !== 0 || msg.role !== 'model');
+    const contents = [
+      ...apiHistory.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
+      { role: 'user', parts: [{ text: message }] }
+    ];
+
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-2.5-flash',
       contents,
       config: {
         systemInstruction,
-        temperature: 0.3, // Lower temperature for more factual consistency
-        thinkingConfig: { thinkingBudget: 8000 }
-      },
+        temperature: 0.3
+      }
     });
-    return response.text;
-  } catch (error: any) {
-    console.error("AI Doctor Error:", error);
-    return "I'm having trouble analyzing your safety profile right now. Please check your internet connection. Technical details: " + (error?.message || "Unknown Error");
+
+    return response.text || "Unable to analyze safety profile.";
+  } catch (err: any) {
+    return "Unable to reach safety service. Details: " + (err?.message || "Unknown error");
   }
 };

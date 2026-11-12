@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 
 export interface UserSettings {
   soundEnabled: boolean;
@@ -18,6 +18,21 @@ interface SettingsModalProps {
 }
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ settings, updateSettings, onClose, onLogout }) => {
+  const [apiKeyInput, setApiKeyInput] = useState(() => {
+    return localStorage.getItem('mednotify_gemini_api_key') || '';
+  });
+  const [showKey, setShowKey] = useState(false);
+
+  const handleApiKeyChange = (val: string) => {
+    const trimmed = val.trim();
+    setApiKeyInput(trimmed);
+    if (trimmed) {
+      localStorage.setItem('mednotify_gemini_api_key', trimmed);
+    } else {
+      localStorage.removeItem('mednotify_gemini_api_key');
+    }
+  };
+
   const toggle = (key: keyof UserSettings) => {
     updateSettings({ ...settings, [key]: !settings[key] });
   };
@@ -121,6 +136,41 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ settings, updateSettings,
                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.notificationsEnabled ? 'left-7' : 'left-1'}`} />
               </button>
             </div>
+          </div>
+
+          {/* Gemini API Key Configuration */}
+          <div className="space-y-3 pt-2 border-t border-slate-100">
+            <div className="flex justify-between items-center">
+              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Google Gemini API Key</h4>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[9px] font-black text-blue-600 hover:text-blue-800 transition-colors uppercase"
+              >
+                Get Free Key ↗
+              </a>
+            </div>
+
+            <div className="relative">
+              <input
+                type={showKey ? "text" : "password"}
+                placeholder="Paste AIzaSy... key"
+                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-xs font-mono pr-14"
+                value={apiKeyInput}
+                onChange={(e) => handleApiKeyChange(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[10px] font-bold px-1.5 py-1 uppercase"
+              >
+                {showKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <p className="text-[9px] text-slate-400 leading-tight">
+              Stored locally in your browser. Alternatively, configure <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600 font-mono">VITE_API_KEY</code> in <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600 font-mono">.env</code>.
+            </p>
           </div>
 
           <div className="pt-4 border-t border-slate-100 space-y-3">
